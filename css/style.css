@@ -1,0 +1,654 @@
+/* 시간표 대시보드 — 디자인 사양: docs/frontend_DESIGN.md (Apple 톤)
+ *
+ * 색·간격·반경은 전부 사양 확정값이다. 임의로 바꾸지 말 것.
+ * 그리드 기하는 --row-h(30분 한 칸) 하나에서 파생된다 — js/timetable.js의
+ * ROW_H 상수와 반드시 같은 값이어야 한다.
+ *
+ * 레이아웃: 좌영역(Now + Now info) : 우영역(Timetable) = 40 : 60,
+ * 좌영역 안에서 Now : Now info = 1 : 1.
+ * 우영역이 넓은 이유는 교시 축이 좌우로 두 줄(50분제·75분제) 붙기 때문이다.
+ */
+
+:root {
+  --ink:         #1d1d1f;
+  --mid-gray:    #707070;
+  --hairline:    #d6d6d6;
+  --canvas:      #f5f5f7;
+  --paper:       #ffffff;
+  --cool-wash:   #e8e8ed;
+  --accent:      #0071e3;
+  --accent-tint: #e5f1fd;
+  --now-red:     #ff3b30;      /* 현재 시각선 — 주 단위로 가로지른다 */
+
+  /* 수강학년 색 (개별 보기 전용).
+     1 카나리아 노랑 · 2 초록 · 3 적색 · 4 파랑 · 대학원 보라 · 교양 주황 ·
+     개인일정 회색. 블록 안에 글자가 들어가므로 배경은 옅은 톤, 테두리는 진한 톤.
+     학년이 안 붙는 행(편람 학년 칸이 비었거나 편람에 없는 과목)이 g0 = 교양이다. */
+  --g1-line: #efcb08;  --g1-tint: #fdf7c9;  --g1-ink: #5f5100;  /* 카나리아 옐로우 */
+  --g2-line: #1f9d55;  --g2-tint: #d9f2e3;  --g2-ink: #12522f;
+  --g3-line: #f52d1a;  --g3-tint: #ffdfdb;  --g3-ink: #85180d;  /* 쨍한 빨강 */
+  --g4-line: #2f6fe4;  --g4-tint: #dde9fb;  --g4-ink: #16386e;
+  --gG-line: #8b5cf6;  --gG-tint: #ebe4fd;  --gG-ink: #4a2894;  /* 대학원 (보라) */
+  --g0-line: #d97757;  --g0-tint: #fae9e1;  --g0-ink: #7d3a22;  /* 교양 (주황) */
+  --gP-line: #6b6b70;  --gP-tint: #d9d9de;  --gP-ink: #2c2c2e;  /* 개인일정 (짙은 회색) */
+
+  --font-sans: -apple-system, ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, Menlo, monospace;
+
+  --row-h:  28px;                     /* 30분 한 칸 */
+  --slot-h: calc(var(--row-h) / 6);   /* 5분 한 행 — 백엔드 SLOT_MIN=5와 일치 */
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* .ctrl-bar·.legend 등이 display:flex를 갖고 있어 hidden 속성만으로는 숨겨지지
+   않는다. 모드 전환이 hidden 토글로 동작하므로 반드시 필요하다. */
+[hidden] { display: none !important; }
+
+html, body { margin: 0; height: 100%; }
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  overflow: hidden;
+}
+
+/* 화면 전체 = 헤더 한 줄 + 그 아래 좌·우 2분할.
+   헤더의 위치·높이는 입력 화면(css/input.css의 .page-head)과 맞춘다 —
+   두 화면을 오갈 때 제목과 이동 버튼이 같은 자리에 있어야 한다. */
+.shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  padding: 32px 28px 28px;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.page-head h1 {
+  margin: 0;
+  flex: 1;
+  min-width: 160px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: 0.007em;
+}
+
+.app {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 24px;
+  overflow: hidden;
+}
+
+/* 좌영역 = Now + Now info. 우영역(Timetable)과 40 : 60으로 나눈다. */
+.col-left {
+  flex: 4 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.panel {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  border-radius: 28px;
+  padding: 28px;
+}
+
+.col-left > .panel { flex: 1 1 0; min-height: 0; }   /* Now : Now info = 1 : 1 */
+
+.panel h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.007em;
+}
+
+/* ── 좌상: NOW ──────────────────────────────────────────────────── */
+
+.now-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.now-head h2 { flex: 1; }
+
+/* 화면이 살아 있다는 신호 — 1초 주기로 천천히 깜빡인다.
+   위상은 js/timetable.js가 서버 시각에 맞춰 animation-delay로 당겨 준다. */
+.live-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: live-blink 1s ease-in-out infinite;
+}
+
+@keyframes live-blink {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.12; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot { animation: none; }
+}
+
+/* "14:32 현재 / 3명 수업중" — 제목 다음으로 눈에 먼저 들어와야 하는 줄 */
+.now-sub {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--accent);
+  margin-bottom: 18px;
+}
+
+.rule {
+  height: 1px;
+  flex: none;
+  background: var(--hairline);
+  margin: 0 0 12px 0;
+}
+
+.now-list {
+  flex: 1;                    /* 빈 상태 문구가 남은 공간 가운데에 오도록 */
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.now-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.now-text { flex: 1; min-width: 0; }
+.now-name {
+  font-size: 15px;
+  font-weight: 600;
+}
+.now-subject {
+  font-size: 13px;
+  color: var(--mid-gray);
+}
+.now-time {
+  flex: none;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--mid-gray);
+}
+
+.now-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px 8px;
+  font-size: 14px;
+  color: var(--mid-gray);
+}
+
+/* ── 좌하: NOW INFO ─────────────────────────────────────────────── */
+
+.info-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.info-head h2 { flex: none; }
+
+.pin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+.pin-badge svg { display: block; }
+
+.btn-sm { width: 28px; height: 28px; margin-left: auto; }
+
+.info-sub {
+  font-size: 13px;
+  color: var(--mid-gray);
+  margin-bottom: 18px;
+  min-height: 16px;
+}
+
+/* 겹친 수업을 Now와 같은 리스트로 나열한다.
+   행 모양은 .now-row 계열을 그대로 재사용하므로 두 패널이 같은 리듬을 갖는다. */
+.info-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.info-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--mid-gray);
+}
+
+/* ── 우영역: Timetable ──────────────────────────────────────────── */
+
+.panel-tt {
+  flex: 6 1 0;
+  gap: 14px;
+  overflow: hidden;
+}
+
+.tt-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tt-head h2 { flex: 1; }
+
+.tt-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* ── 버튼 (필 형태, 사양: radius 999px / 1px solid ink / 투명 배경) ── */
+
+.btn-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 11px 16px;
+  border-radius: 999px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-pill:hover { background: var(--cool-wash); }
+
+.btn-round {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.btn-round:hover { background: var(--cool-wash); }
+
+.btn-pill svg, .btn-round svg { display: block; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 전체 선택 체크박스 ────────────────────────────────────────── */
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+}
+/* 네이티브 체크박스는 숨기지 않고 투명하게 겹쳐 둔다 — 키보드 초점과
+   label 연결이 그대로 살아 있어야 한다. */
+.check input {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.check .box {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 5px;
+  border: 1.5px solid var(--hairline);
+  background: var(--paper);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.check .box svg { display: block; opacity: 0; }
+.check input:checked + .box {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.check input:checked + .box svg { opacity: 1; }
+.check input:focus-visible + .box { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 구성원 선택 칩 (전체 선택 해제 시에만 노출) ──────────────── */
+/* 전체 선택을 해제하면 그리드가 비고 이 줄이 나타난다. 누른 사람만
+   (활성 칩) 겹쳐 그려진다 — opt-in 방식. */
+
+.member-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--hairline);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: var(--cool-wash);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.chip:not(.is-active) {
+  background: transparent;
+  border-color: var(--hairline);
+  color: var(--mid-gray);
+}
+
+/* ── 범례 ──────────────────────────────────────────────────────── */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  font-size: 12px;
+  color: var(--mid-gray);
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.legend i {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 2px;
+  font-style: normal;
+}
+/* 겹침 범례 — 칸을 끊지 않고 가로 그라데이션 바 하나로 잇는다.
+   겹침이 알파 누적이라 농도가 연속이기 때문이다. 눈금은 바 양 끝 바로 아래. */
+.scale { display: flex; flex-direction: column; gap: 4px; width: 168px; }
+.scale-bar {
+  height: 9px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+}
+.scale-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--mid-gray);
+}
+.scale-empty { color: var(--mid-gray); }
+
+.legend .g1 { background: var(--g1-tint); border: 1.5px solid var(--g1-line); }
+.legend .g2 { background: var(--g2-tint); border: 1.5px solid var(--g2-line); }
+.legend .g3 { background: var(--g3-tint); border: 1.5px solid var(--g3-line); }
+.legend .g4 { background: var(--g4-tint); border: 1.5px solid var(--g4-line); }
+.legend .gG { background: var(--gG-tint); border: 1.5px solid var(--gG-line); }
+.legend .g0 { background: var(--g0-tint); border: 1.5px solid var(--g0-line); }
+.legend .gP { background: var(--gP-tint); border: 1.5px solid var(--gP-line); }
+
+/* ── 그리드 ────────────────────────────────────────────────────── */
+
+.grid-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* 열: [교시(50분제)] [시간] [월~금] [교시(75분제)]
+   — js/timetable.js의 COL_DAY0(=3) · COL_P75(=8)과 반드시 맞아야 한다. */
+.grid {
+  display: grid;
+  grid-template-columns: 46px 52px repeat(5, minmax(70px, 1fr)) 46px;
+  position: relative;
+  width: 100%;
+  transform: translateX(0);
+  opacity: 1;
+  transition: transform .2s ease, opacity .2s ease;
+}
+/* 개별 보기 넘김 애니메이션 상태 (js가 클래스를 갈아 끼운다) */
+.grid.phase-out { transform: translateX(var(--slide-out)); opacity: 0; }
+.grid.phase-in  { transform: translateX(var(--slide-in));  opacity: 0; transition: none; }
+
+.day-head {
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid var(--hairline);
+}
+.day-head.is-today {
+  color: var(--accent);
+  background: var(--accent-tint);
+}
+
+.time-label {
+  grid-column: 2;
+  padding: 4px 6px 0 0;
+  font-size: 11px;
+  color: var(--mid-gray);
+  text-align: right;
+}
+
+/* 교시 축 — 왼쪽 열은 50분제(1~n교시), 금요일 오른쪽 열은 75분제(A~G).
+   한 칸이 곧 한 교시 밴드이고, 수업 블록도 같은 밴드에 맞춰 놓인다. */
+.period {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 1px 4px;
+  border-radius: 6px;
+  background: var(--canvas);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mid-gray);
+}
+
+/* 레이어 0 — 빈 칸. 단위는 30분이 아니라 50분제 교시 밴드(60분)다.
+   30분 눈금은 ::after로 그리는 장식일 뿐, hover 영역은 교시 한 칸 전체다. */
+.cell {
+  position: relative;
+  background: var(--paper);
+  border-top: 1px solid rgba(29, 29, 31, 0.16);
+}
+.cell::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(29, 29, 31, 0.06);
+}
+
+/* 레이어 1(겹쳐 보기) — 수업 한 건 = 반투명 박스 한 장. 겹치면 알파가 쌓여
+   저절로 진해진다. rgba 값은 js/timetable.js의 WASH_RGB·WASH_A와 같아야
+   범례 색(미리 합성해 칠한다)과 그리드가 어긋나지 않는다. */
+.wash {
+  z-index: 1;
+  pointer-events: none;
+  margin: 1px 3px;
+  border-radius: 8px;
+  background: rgba(0, 113, 227, 0.13);
+}
+
+/* 레이어 1' — 투명한 판정 칸. 반투명 박스끼리 겹치면 맨 위 한 장만 마우스를
+   받아 Now info가 한 명밖에 못 내므로, hover·click은 이쪽이 전담한다. */
+.hit {
+  z-index: 5;
+  cursor: pointer;
+}
+.hit.is-active {
+  border-radius: 8px;
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+/* 레이어 1(개별 보기) — 수강학년 색 + 블록 안 텍스트 */
+.block {
+  z-index: 2;
+  margin: 1px 3px;
+  border-radius: 8px;
+  overflow: hidden;
+  padding: 5px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--g-tint);
+  border: 1.5px solid var(--g-line);
+  color: var(--g-ink);
+  cursor: pointer;
+}
+.block.is-active { box-shadow: 0 0 0 2px var(--ink); }
+.block-subject { font-size: 11px; font-weight: 700; line-height: 1.25; }
+.block-meta    { font-size: 10px; opacity: 0.8; }
+
+.block.g1 { --g-tint: var(--g1-tint); --g-line: var(--g1-line); --g-ink: var(--g1-ink); }
+.block.g2 { --g-tint: var(--g2-tint); --g-line: var(--g2-line); --g-ink: var(--g2-ink); }
+.block.g3 { --g-tint: var(--g3-tint); --g-line: var(--g3-line); --g-ink: var(--g3-ink); }
+.block.g4 { --g-tint: var(--g4-tint); --g-line: var(--g4-line); --g-ink: var(--g4-ink); }
+.block.gG { --g-tint: var(--gG-tint); --g-line: var(--gG-line); --g-ink: var(--gG-ink); }
+.block.g0 { --g-tint: var(--g0-tint); --g-line: var(--g0-line); --g-ink: var(--g0-ink); }
+.block.gP { --g-tint: var(--gP-tint); --g-line: var(--gP-line); --g-ink: var(--gP-ink); }
+
+/* 레이어 2 — 요일 칸막이. 히트맵이 격자선을 덮어 버리므로 따로 올린다. */
+.col-rule {
+  z-index: 3;
+  pointer-events: none;
+  border-right: 1px solid rgba(29, 29, 31, 0.1);
+}
+
+/* 레이어 3 — 현재 시각선. 월요일부터 금요일까지 한 줄로 가로지른다. */
+.now-line {
+  position: relative;
+  pointer-events: none;
+  z-index: 4;
+}
+.now-line::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: var(--now-offset);
+  border-top: 2px solid var(--now-red);
+}
+/* 선 왼쪽 끝의 점 — 어느 높이인지 눈으로 잡아 주는 표식 */
+.now-line::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: calc(var(--now-offset) - 3px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--now-red);
+}
+
+/* ── 툴팁 ──────────────────────────────────────────────────────── */
+/* 그리드 위를 따라다니며 "구성원 명단 / n명 가능"을 보여준다.
+   상세 정보는 Now info가 맡고, 이쪽은 한눈에 스치듯 읽는 용도다. */
+
+.tooltip {
+  position: fixed;
+  left: -9999px;
+  top: -9999px;
+  z-index: 50;
+  max-width: 320px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 12px;
+  line-height: 1.5;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+}
+.tooltip .tip-main { font-weight: 600; }
+.tooltip .tip-sub  { opacity: 0.75; }
+
+/* ── 좁은 화면: 좌우 2분할 → 상하 배치 ───────────────────────── */
+
+@media (max-width: 900px) {
+  body { overflow: auto; }
+  .shell {
+    height: auto;
+    min-height: 100vh;
+    padding: 16px;
+    gap: 14px;
+    overflow: visible;
+  }
+  .page-head h1 { font-size: 22px; }
+  .app {
+    flex-direction: column;
+    flex: none;
+    gap: 16px;
+    overflow: visible;
+  }
+  .col-left { flex: none; gap: 16px; }
+  .panel {
+    flex: none;
+    height: auto;
+    padding: 20px;
+    border-radius: 20px;
+  }
+  .col-left > .panel { flex: none; }
+  .panel-now  { max-height: 40vh; }
+  .panel-info { max-height: 45vh; }
+  .panel-tt   { overflow: visible; }
+  .grid-wrap  { overflow-x: auto; }
+  .grid { min-width: 620px; }   /* 교시 축 두 열(46px×2)이 늘어난 만큼 */
+}

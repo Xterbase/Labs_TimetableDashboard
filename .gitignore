@@ -1,0 +1,6 @@
+# 개인정보 (구성원 명단·시간표·편람) — README의 "data/" 절 참고
+data/
+
+# OS / 에디터 부산물
+.DS_Store
+.Rhistory
